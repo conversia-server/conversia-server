@@ -1,26 +1,30 @@
 // ================================
-// 🚀 Servidor Convers IA (Node.js)
-// Compatível com Render + WhatsApp Web
+// 🚀 Servidor Convers IA – Multi-Cliente
 // ================================
 
 const express = require("express");
 const cors = require("cors");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-let qrCodeData = null;
-let client;
+const clients = {}; // Sessões ativas
+const qrCodes = {}; // QR codes temporários
 
-// ================================
-// 🔹 Inicializa o cliente WhatsApp
-// ================================
-function startWhatsApp() {
-  client = new Client({
-    authStrategy: new LocalAuth({ dataPath: "./.wwebjs_auth" }),
+// ====================================
+// 🔹 Função para iniciar cliente WhatsApp
+// ====================================
+function startClient(clientId) {
+  const sessionPath = path.join(__dirname, ".sessions", clientId);
+  if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
+
+  const client = new Client({
+    authStrategy: new LocalAuth({ dataPath: sessionPath }),
     puppeteer: {
       headless: true,
       args: [
@@ -35,52 +39,67 @@ function startWhatsApp() {
   });
 
   client.on("qr", async (qr) => {
-    console.log("📱 QR Code recebido. Escaneie no WhatsApp.");
-    qrCodeData = await qrcode.toDataURL(qr);
+    qrCodes[clientId] = await qrcode.toDataURL(qr);
+    console.log(`📱 QR Code gerado para cliente ${clientId}`);
   });
 
   client.on("ready", () => {
-    console.log("✅ WhatsApp conectado com sucesso!");
-    qrCodeData = null;
+    console.log(`✅ Cliente ${clientId} conectado!`);
+    qrCodes[clientId] = null;
   });
 
   client.on("auth_failure", (msg) => {
-    console.error("❌ Falha na autenticação:", msg);
+    console.error(`❌ Falha na autenticação do cliente ${clientId}:`, msg);
   });
 
   client.initialize();
+  clients[clientId] = client;
 }
 
-// ================================
-// 🔹 Rotas da API
-// ================================
-
-// Inicia o WhatsApp Web
+// ====================================
+// 🔹 Inicia conexão (rota chamada pelo WordPress)
+// ====================================
 app.post("/wp-json/convers-ia/v1/connect", (req, res) => {
-  if (!client) {
-    console.log("🚀 Inicializando o WhatsApp...");
-    startWhatsApp();
-    return res.json({ status: "starting" });
-  }
+  const clientId = req.query.client_id || "default";
+  console.log(`🔗 Conectando cliente: ${clientId}`);
 
-  if (client.info) {
-    return res.json({ status: "active" });
-  }
+  if (!clients[clientId]) startClient(clientId);
 
-  res.json({ status: "waiting_qr" });
+  res.json({ status: "starting", client_id: clientId });
 });
 
-// Retorna o QR Code
+// ====================================
+// 🔹 Retorna QR Code
+// ====================================
 app.get("/wp-json/convers-ia/v1/qr", (req, res) => {
-  if (qrCodeData) {
-    res.json({ qr: qrCodeData.replace(/^data:image\/png;base64,/, "") });
-  } else {
-    res.json({ qr: null });
+  const clientId = req.query.client_id || "default";
+  const qr = qrCodes[clientId] ? qrCodes[clientId].replace(/^data:image\/png;base64,/, "") : null;
+  res.json({ qr });
+});
+
+// ====================================
+// 🔹 Envia mensagens (opcional para o plugin futuro)
+// ====================================
+app.post("/wp-json/convers-ia/v1/send", async (req, res) => {
+  const { client_id, to, message } = req.body;
+
+  if (!clients[client_id]) {
+    return res.status(400).json({ error: "Cliente não conectado" });
+  }
+
+  try {
+    await clients[client_id].sendMessage(to, message);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Erro ao enviar mensagem:", err);
+    res.status(500).json({ error: "Falha ao enviar mensagem" });
   }
 });
 
-// ================================
+// ====================================
 // 🔹 Inicialização do servidor
-// ================================
+// ====================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌐 Servidor Convers IA rodando na porta ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🌐 Servidor Convers IA Multi-Cliente rodando na porta ${PORT}`);
+});
