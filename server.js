@@ -157,9 +157,129 @@ app.post("/wp-json/convers-ia/v1/send-message", async (req, res) => {
 });
 
 // =========================
+// 🤖 Integração com Automação Inteligente (Convers IA Flow Builder)
+// =========================
+
+const WP_API_URL = "https://SEU_DOMINIO/wp-json/convers-ia/v1/automations"; // 🔹 Substitua SEU_DOMINIO
+const activeFlows = {}; // Cache de automações carregadas
+const conversationState = {}; // Estado atual de cada usuário
+
+// --- Carrega automações do WordPress ---
+async function loadAutomations() {
+  try {
+    const res = await fetch(WP_API_URL);
+    const data = await res.json();
+    const flows = data.filter((a) => a.is_active && a.flow_data);
+    flows.forEach((flow) => (activeFlows[flow.id] = flow));
+    console.log(`🧩 ${flows.length} fluxos ativos carregados.`);
+  } catch (err) {
+    console.error("❌ Falha ao carregar automações:", err);
+  }
+}
+
+// --- Interpreta mensagem recebida ---
+async function handleIncomingMessage(clientId, message) {
+  const sender = message.from;
+  const text = message.body.toLowerCase().trim();
+  const flow = Object.values(activeFlows)[0];
+  if (!flow) return;
+
+  const { nodes, connections } = flow.flow_data;
+
+  // Se é a primeira mensagem do cliente → começa do início
+  if (!conversationState[sender]) {
+    const firstNode = nodes[0];
+    conversationState[sender] = { node: firstNode };
+    await message.reply(firstNode.text);
+    await sendNextButtons(clientId, sender, firstNode, connections);
+    return;
+  }
+
+  const state = conversationState[sender];
+  const currentNode = state.node;
+
+  // Encontra a próxima conexão com base no texto
+  const options = connections.filter((c) => c.from === currentNode.id);
+  let matched = null;
+  for (const conn of options) {
+    if (!conn.condition) {
+      matched = conn;
+      break;
+    }
+    const keywords = conn.condition
+      .split(",")
+      .map((k) => k.trim().toLowerCase());
+    if (keywords.some((k) => text.includes(k))) {
+      matched = conn;
+      break;
+    }
+  }
+
+  if (!matched) {
+    await message.reply("❓ Não entendi... tente novamente.");
+    await sendNextButtons(clientId, sender, currentNode, connections);
+    return;
+  }
+
+  const nextNode = nodes.find((n) => n.id === matched.to);
+  if (!nextNode) {
+    await message.reply("⚡ Fim do fluxo.");
+    delete conversationState[sender];
+    return;
+  }
+
+  conversationState[sender].node = nextNode;
+  await message.reply(nextNode.text);
+  await sendNextButtons(clientId, sender, nextNode, connections);
+
+  // Encaminhamento automático
+  if (nextNode.type === "Encaminhar") {
+    const setor = nextNode.text || "atendimento";
+    console.log(`📨 Encaminhando ${sender} para o setor: ${setor}`);
+  }
+}
+
+// --- Envia botões interativos (via WhatsApp) ---
+async function sendNextButtons(clientId, to, node, connections) {
+  const client = clients[clientId];
+  if (!client) return;
+
+  const options = connections.filter(
+    (c) => c.from === node.id && c.as_button
+  );
+  if (options.length === 0) return;
+
+  const buttons = options.map((c) => ({
+    body: c.condition.split(",")[0].trim(),
+  }));
+
+  await client.sendMessage(to, {
+    text: "Escolha uma opção:",
+    buttons,
+    headerType: 1,
+  });
+}
+
+// --- Listener global para todas as mensagens ---
+setInterval(loadAutomations, 60000); // Atualiza fluxos a cada 1 min
+loadAutomations(); // Carrega inicial
+
+Object.keys(clients).forEach((clientId) => {
+  const client = clients[clientId];
+  client.on("message", async (msg) => {
+    try {
+      await handleIncomingMessage(clientId, msg);
+    } catch (err) {
+      console.error("❌ Erro ao processar mensagem:", err);
+    }
+  });
+});
+
+// =========================
 // EXECUÇÃO DO SERVIDOR
 // =========================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🌐 Servidor Convers IA persistente rodando na porta ${PORT}`);
 });
+
