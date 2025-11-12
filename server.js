@@ -4,9 +4,13 @@
 
 import express from "express";
 import cors from "cors";
-import { Client, LocalAuth } from "whatsapp-web.js";
 import qrcode from "qrcode";
 
+// Importação compatível com CommonJS
+import pkg from "whatsapp-web.js";
+const { Client, LocalAuth } = pkg;
+
+// Inicializa o servidor Express
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -77,7 +81,7 @@ app.get("/wp-json/convers-ia/v1/qr", (req, res) => {
 // =========================
 // EXECUÇÃO DO SERVIDOR
 // =========================
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000; // pode ser 10000 para Render
 app.listen(PORT, () => {
   console.log(`🌐 Servidor Convers IA Multi-Cliente rodando na porta ${PORT}`);
 });
