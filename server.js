@@ -61,7 +61,7 @@ app.get("/", (req, res) => {
 });
 
 // Iniciar sessão (cria cliente e retorna status)
-app.post("/wp-json/convers-ia/v1/connect", (req, res) => {
+app.all("/wp-json/convers-ia/v1/connect", (req, res) => {
   const clientId = req.query.client_id || "default";
   console.log(`🔗 Conectando cliente: ${clientId}`);
 
@@ -85,3 +85,4 @@ const PORT = process.env.PORT || 10000; // pode ser 10000 para Render
 app.listen(PORT, () => {
   console.log(`🌐 Servidor Convers IA Multi-Cliente rodando na porta ${PORT}`);
 });
+
