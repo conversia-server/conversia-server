@@ -1,79 +1,103 @@
 // =========================
-// Convers IA - Servidor Multi-Cliente WhatsApp Web
+// Convers IA - Servidor Multi-Cliente WhatsApp Web (Persistente)
 // =========================
 
 import express from "express";
 import cors from "cors";
 import qrcode from "qrcode";
-
-// Importação compatível com CommonJS
+import fs from "fs";
+import path from "path";
 import pkg from "whatsapp-web.js";
 const { Client, LocalAuth } = pkg;
 
-// Inicializa o servidor Express
+// =========================
+// Inicialização do servidor Express
+// =========================
 const app = express();
 app.use(express.json());
 
-// =========================
-// 🔧 Configuração completa de CORS
-// =========================
-app.use(cors({
-  origin: '*', // permite conexões de qualquer domínio (WordPress)
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
-
-// Permite respostas imediatas a pré-flights OPTIONS
-app.options('*', cors());
+// Configuração de CORS
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+app.options("*", cors());
 
 // =========================
-// Armazenamento de clientes e QRs
+// Estruturas principais
 // =========================
 const clients = {};
 const qrCodes = {};
+const sessionsDir = path.join(process.cwd(), "sessions");
+
+// Garante que a pasta de sessões existe (persistência local)
+if (!fs.existsSync(sessionsDir)) {
+  fs.mkdirSync(sessionsDir, { recursive: true });
+  console.log("📂 Pasta de sessões criada:", sessionsDir);
+}
 
 // =========================
-// Função para iniciar cliente WhatsApp
+// Função para inicializar cliente WhatsApp com persistência
 // =========================
-function startClient(clientId) {
+async function startClient(clientId) {
   if (clients[clientId]) {
-    console.log(`⚠️ Cliente ${clientId} já iniciado.`);
+    console.log(`⚠️ Cliente ${clientId} já está ativo.`);
     return;
   }
 
   console.log(`🟢 Iniciando cliente: ${clientId}`);
 
+  // Cria pasta individual por cliente
+  const clientPath = path.join(sessionsDir, clientId);
+  if (!fs.existsSync(clientPath)) fs.mkdirSync(clientPath);
+
+  // Inicializa cliente com autenticação local persistente
   const client = new Client({
-    authStrategy: new LocalAuth({ clientId }),
+    authStrategy: new LocalAuth({
+      dataPath: clientPath,
+      clientId: clientId,
+    }),
     puppeteer: {
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      headless: true,
     },
   });
 
-  // Evento QR — gerado quando precisa autenticar
+  // Eventos de QR / Conexão
   client.on("qr", async (qr) => {
-    try {
-      const qrImage = await qrcode.toDataURL(qr);
-      qrCodes[clientId] = qrImage;
-      console.log(`📱 QR atualizado para cliente: ${clientId}`);
-    } catch (err) {
-      console.error(`❌ Erro ao gerar QR para ${clientId}:`, err);
-    }
+    const qrImage = await qrcode.toDataURL(qr);
+    qrCodes[clientId] = qrImage;
+    console.log(`📱 QR gerado/atualizado para cliente: ${clientId}`);
   });
 
-  // Cliente pronto
   client.on("ready", () => {
-    console.log(`✅ Cliente pronto: ${clientId}`);
+    console.log(`✅ Cliente conectado e pronto: ${clientId}`);
+    delete qrCodes[clientId]; // limpa QR após conexão
   });
 
-  // Cliente desconectado
-  client.on("disconnected", () => {
-    console.log(`🔴 Cliente desconectado: ${clientId}`);
+  client.on("authenticated", () => {
+    console.log(`🔐 Cliente autenticado: ${clientId}`);
+  });
+
+  client.on("disconnected", (reason) => {
+    console.log(`🔴 Cliente desconectado (${clientId}): ${reason}`);
     delete clients[clientId];
     delete qrCodes[clientId];
+    // Tenta reconectar automaticamente após 10s
+    setTimeout(() => {
+      console.log(`♻️ Tentando reconectar cliente ${clientId}...`);
+      startClient(clientId);
+    }, 10000);
   });
 
-  client.initialize();
+  // Inicializa
+  client.initialize().catch((err) => {
+    console.error(`❌ Erro ao inicializar cliente ${clientId}:`, err);
+  });
+
   clients[clientId] = client;
 }
 
@@ -81,37 +105,35 @@ function startClient(clientId) {
 // ROTAS PRINCIPAIS
 // =========================
 
-// Rota base de status (teste rápido)
+// Rota raiz (teste rápido)
 app.get("/", (req, res) => {
   res.json({
-    status: "Servidor ativo",
+    status: "Servidor ativo e persistente",
     clients: Object.keys(clients),
+    timestamp: new Date().toISOString(),
   });
 });
 
-// Iniciar sessão (WordPress → iniciar WhatsApp)
+// Iniciar ou restaurar sessão
 app.all("/wp-json/convers-ia/v1/connect", (req, res) => {
   const clientId = req.query.client_id || "default";
   console.log(`🔗 Solicitando conexão para cliente: ${clientId}`);
 
-  if (!clients[clientId]) {
-    startClient(clientId);
-  }
-
+  startClient(clientId);
   res.json({
     status: "starting",
     client_id: clientId,
   });
 });
 
-// Obter QR Code (WordPress → mostrar QR)
+// Obter QR code atual
 app.get("/wp-json/convers-ia/v1/qr", (req, res) => {
   const clientId = req.query.client_id || "default";
   const qr = qrCodes[clientId]
     ? qrCodes[clientId].replace(/^data:image\/png;base64,/, "")
     : null;
 
-  console.log(`📤 QR enviado para ${clientId}: ${qr ? "OK" : "NULO"}`);
+  console.log(`📤 QR solicitado (${clientId}): ${qr ? "OK" : "Aguardando..."}`);
   res.json({ qr });
 });
 
@@ -120,5 +142,5 @@ app.get("/wp-json/convers-ia/v1/qr", (req, res) => {
 // =========================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🌐 Servidor Convers IA Multi-Cliente rodando na porta ${PORT}`);
+  console.log(`🌐 Servidor Convers IA persistente rodando na porta ${PORT}`);
 });
