@@ -160,7 +160,7 @@ app.post("/wp-json/convers-ia/v1/send-message", async (req, res) => {
 // 🤖 Integração com Automação Inteligente (Convers IA Flow Builder)
 // =========================
 
-const WP_API_URL = "https://SEU_DOMINIO/wp-json/convers-ia/v1/automations"; // 🔹 Substitua SEU_DOMINIO
+const WP_API_URL = "https://centrodecriacao.com.br/wp-json/convers-ia/v1/automations"; // 🔹 Substitua SEU_DOMINIO
 const activeFlows = {}; // Cache de automações carregadas
 const conversationState = {}; // Estado atual de cada usuário
 
@@ -282,4 +282,5 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🌐 Servidor Convers IA persistente rodando na porta ${PORT}`);
 });
+
 
